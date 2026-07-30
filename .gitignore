@@ -1,0 +1,26 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+/methods/
+/models/
+/outputs/
+/logs/
+/wildjailbreak_pair_work/
+*.out
+*.err
+
+# Local historical experiments are intentionally excluded from the public release.
+legacy_label_score/
+SCRIPT_LAYOUT.md
+response_generation/*.slurm
+response_generation/run_boundary_metrics.sh
+response_generation/run_mixed_recalibration_sequence.sh
+response_generation/compute_boundary_metrics.py
+response_generation/compute_raw_core_metrics.py
+response_generation/case_study_core_metrics.py

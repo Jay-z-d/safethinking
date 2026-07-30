@@ -1,0 +1,17 @@
+Contains information from WildJailbreak, which is made available under the
+Open Data Commons Attribution License (ODC-By) v1.0.
+
+WildJailbreak:
+https://huggingface.co/datasets/allenai/wildjailbreak
+
+ODC-By 1.0 license:
+https://opendatacommons.org/licenses/by/1-0/
+
+AI2 Responsible Use Guidelines:
+https://allenai.org/responsible-use
+
+The files under data/boundary and data/refusal_induction are a derivative
+database of WildJailbreak and are conveyed under ODC-By 1.0. The refusal
+templates under data/refusal_templates are produced from model responses to
+WildJailbreak-derived inputs. No project code is licensed under ODC-By; see
+the repository-level LICENSE for the code license.
