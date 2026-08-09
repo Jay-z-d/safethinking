@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -99,8 +100,20 @@ def batched(items: Iterable[Any], size: int) -> Iterable[list[Any]]:
 def checkpoint_jobs(
     tokenizer: Any,
     rows: Iterable[tuple[int, dict[str, Any]]],
+    expected_model: Path | None = None,
 ) -> Iterable[tuple[dict[str, Any], CheckpointText]]:
     for line_number, row in rows:
+        if expected_model is not None:
+            row_model = row.get("model_path")
+            if not isinstance(row_model, str) or not row_model.strip():
+                raise ValueError(f"Row {line_number} is missing model_path")
+            expected = os.path.normcase(os.path.abspath(str(expected_model)))
+            actual = os.path.normcase(os.path.abspath(row_model))
+            if actual != expected:
+                raise ValueError(
+                    f"Row {line_number} model_path mismatch: {row_model!r} != "
+                    f"{str(expected_model)!r}"
+                )
         for checkpoint in build_checkpoint_texts(tokenizer, row):
             metadata = {
                 "input_line": line_number,
@@ -112,8 +125,18 @@ def checkpoint_jobs(
                 "method": str(row.get("method") or "unknown"),
                 "method_name": str(row.get("method_name") or row.get("method") or "unknown"),
                 "model_path": str(row.get("model_path") or ""),
+                "benign_source_index": row.get("benign_source_index"),
+                "harmful_source_index": row.get("harmful_source_index"),
+                "source_group": str(
+                    row.get("source_group")
+                    or row.get("harmful_source_index")
+                    or row.get("pair_id")
+                    or ""
+                ),
+                "formal_fold": row.get("formal_fold"),
                 "checkpoint": checkpoint.name,
                 "checkpoint_source": checkpoint.source,
+                **checkpoint.metadata,
             }
             if not metadata["pair_id"] or metadata["side"] not in {"benign", "harmful"}:
                 raise ValueError(
@@ -208,7 +231,7 @@ def main() -> None:
         shard_index += 1
 
     rows = read_rows(args.input, args.limit)
-    jobs = checkpoint_jobs(tokenizer, rows)
+    jobs = checkpoint_jobs(tokenizer, rows, args.model)
     with metadata_path.open("w", encoding="utf-8") as metadata_handle:
         progress = tqdm(desc="Extracting hidden states", unit="checkpoint")
         for batch in batched(jobs, args.batch_size):
@@ -284,13 +307,15 @@ def main() -> None:
         "metadata": metadata_path.name,
         "notes": (
             "h_query is the original-query prompt end; h_guided is the stored method "
-            "prompt end; h_reasoned is IA stage-2 or a reconstructed saved generation prefix."
+            "prompt end; IA checkpoints distinguish a fixed analysis boundary from the "
+            "stage-2 pre-answer prompt and label true/shuffled/empty controls."
         ),
     }
     (args.output_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    (args.output_dir / "_SUCCESS").write_text("complete\n", encoding="utf-8")
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
 

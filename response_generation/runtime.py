@@ -127,7 +127,7 @@ class GenerationContext:
     def base_result(self, record: dict[str, Any], seed: int) -> dict[str, Any]:
         side = record.get("side") or record.get("gold_label")
         method_name = getattr(self.args, "method_name", None) or self.method_name
-        return {
+        result = {
             "record_id": record["record_id"],
             "pair_id": record["pair_id"],
             "side": side,
@@ -152,6 +152,16 @@ class GenerationContext:
                 "max_new_tokens": self.args.max_new_tokens,
             },
         }
+        for field in (
+            "benign_source_index",
+            "harmful_source_index",
+            "source_group",
+            "embedding_score",
+            "reranker_score",
+        ):
+            if record.get(field) is not None:
+                result[field] = record[field]
+        return result
 
     def append_response_fields(
         self,

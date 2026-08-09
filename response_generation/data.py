@@ -33,6 +33,13 @@ def iter_records(path: Path, query_field: str) -> Iterable[dict[str, Any]]:
                         "source_field": source_field,
                         "query": query,
                         "gold_label": gold_label,
+                        "benign_source_index": row.get("benign_source_index"),
+                        "harmful_source_index": row.get("harmful_source_index"),
+                        "source_group": str(
+                            row.get("harmful_source_index", pair_id)
+                        ),
+                        "embedding_score": row.get("embedding_score"),
+                        "reranker_score": row.get("reranker_score"),
                     }
                 continue
 
@@ -52,4 +59,11 @@ def iter_records(path: Path, query_field: str) -> Iterable[dict[str, Any]]:
                 "source_field": query_field,
                 "query": query,
                 "gold_label": row.get("gold_label") or row.get("label"),
+                "benign_source_index": row.get("benign_source_index"),
+                "harmful_source_index": row.get("harmful_source_index"),
+                "source_group": str(
+                    row.get("source_group")
+                    or row.get("harmful_source_index")
+                    or row.get("pair_id", record_id)
+                ),
             }

@@ -3,7 +3,7 @@
 #SBATCH -p compute
 #SBATCH -N 1
 #SBATCH -t 00:30:00
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH -o slurm-%x-%j.out
 #SBATCH -e slurm-%x-%j.err
@@ -14,11 +14,13 @@ set -euo pipefail
 : "${OUTPUT:?Export OUTPUT as the probe JSON path}"
 : "${METHOD:?Export METHOD as the method name stored in metadata}"
 
-PROJECT_ROOT=${PROJECT_ROOT:-$HOME/Work/safethinking}
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+DEFAULT_PROJECT_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
+PROJECT_ROOT=${PROJECT_ROOT:-$DEFAULT_PROJECT_ROOT}
 CONDA_ENV=${CONDA_ENV:-safethinking}
 PYTHON_BIN=${PYTHON_BIN:-python}
 BEFORE=${BEFORE:-h_query}
-AFTER=${AFTER:-h_reasoned}
+AFTER=${AFTER:-h_analysis_boundary_true}
 FOLDS=${FOLDS:-5}
 BOOTSTRAP_SAMPLES=${BOOTSTRAP_SAMPLES:-2000}
 
@@ -34,4 +36,3 @@ srun "$PYTHON_BIN" -m representation_analysis.probe_separability \
   --after "$AFTER" \
   --folds "$FOLDS" \
   --bootstrap-samples "$BOOTSTRAP_SAMPLES"
-

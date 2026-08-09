@@ -25,13 +25,25 @@ need to download model weights.
 
 - `h_query`: original user query at the generation boundary.
 - `h_guided`: safety-method prompt before generated reasoning.
-- `h_reasoned`: IA stage-2 prompt after intention analysis, or a reconstructable
-  saved reasoning prefix immediately before the visible final answer.
+- `h_analysis_boundary_true`: true IA analysis followed by the fixed end-of-turn
+  boundary, before the continuation request.
+- `h_preanswer_true`: true IA analysis plus the fixed continuation request and
+  assistant generation header, immediately before the visible final answer.
+- Matching `*_shuffled` and `*_empty` checkpoints control for non-query-specific
+  analysis text and the stage-2 chat structure.
 
 For the first controlled run, use `safe_llm_intention_analysis`: its saved stage-2
-messages define `h_reasoned` exactly. Prompt-wrapper methods may lack a separate
+messages define the analysis boundary and pre-answer state exactly. Prompt-wrapper methods may lack a separate
 reasoning checkpoint when their output does not explicitly delimit analysis from
 the final answer.
+
+## Formal pilot
+
+The corrected 100-pair, three-seed workflow is documented in
+[`FORMAL_RUNBOOK.md`](FORMAL_RUNBOOK.md). It freezes harmful-source grouped folds,
+builds fold-local length-matched controls, extracts multiple layers, and runs
+source-clustered refit-bootstrap probes. The older commands below describe the
+historical 20-pair smoke workflow only.
 
 ## 1. Generate a small IA dataset
 
@@ -77,7 +89,7 @@ Outputs are sharded safetensors plus `metadata.jsonl` and `manifest.json`. The
 extractor refuses to truncate checkpoints; set `--max-length` to turn an excessive
 context into an explicit error.
 
-## 3. Run the pair-grouped probe
+## 3. Run the source-grouped probe
 
 ```bash
 python -m representation_analysis.probe_separability \
@@ -85,16 +97,17 @@ python -m representation_analysis.probe_separability \
   --output outputs/representations/llama31_8b_ia_last/probe.json \
   --method safe_llm_intention_analysis \
   --before h_query \
-  --after h_reasoned \
+  --after h_analysis_boundary_true \
   --folds 5 \
   --bootstrap-samples 2000
 ```
 
-Both sides and all seeds of one `pair_id` remain in the same fold. A single scaler
-is fitted to the concatenated before/after *training* representations in each
-fold. Separate probes then report out-of-fold ROC-AUC, balanced accuracy, and the
-sign-consistent normalized margin `y * decision / ||w||`, with pair-bootstrap 95%
-confidence intervals.
+Both sides, all seeds, and every pair sharing one `harmful_source_index` remain in
+the same fold. The scaler is fitted only on before-state training representations
+and reused for the after state. Separate probes report fold-aggregated ROC-AUC,
+balanced accuracy, and the sign-consistent raw-hidden-space margin
+`y * decision / ||w_raw||`. Confidence intervals use a harmful-source cluster
+bootstrap that refits preprocessing and probes.
 
 ## 4. Slurm smoke run
 

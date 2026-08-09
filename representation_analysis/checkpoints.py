@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -16,6 +16,7 @@ class CheckpointText:
     name: str
     text: str
     source: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def _stored_messages(row: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
@@ -49,6 +50,8 @@ def render_messages(
     tokenizer: Any,
     messages: list[dict[str, str]],
     enable_thinking: bool | None,
+    *,
+    add_generation_prompt: bool = True,
 ) -> str:
     kwargs: dict[str, bool] = {}
     if isinstance(enable_thinking, bool):
@@ -57,7 +60,7 @@ def render_messages(
         tokenizer.apply_chat_template(
             messages,
             tokenize=False,
-            add_generation_prompt=True,
+            add_generation_prompt=add_generation_prompt,
             **kwargs,
         )
     )
@@ -82,12 +85,12 @@ def generated_reasoning_prefix(row: dict[str, Any]) -> str | None:
 
 
 def build_checkpoint_texts(tokenizer: Any, row: dict[str, Any]) -> list[CheckpointText]:
-    """Construct query, guided-prompt, and post-reasoning checkpoints.
+    """Construct exact prompt, analysis-boundary, and pre-answer checkpoints.
 
     ``h_query`` is method-independent. ``h_guided`` captures a method wrapper
-    before generated analysis. ``h_reasoned`` captures an IA stage-2 prompt or
-    a reconstructable generated reasoning prefix immediately before the final
-    answer. Identical checkpoints are omitted.
+    before generated analysis. IA rows add fixed-boundary true/shuffled/empty
+    analysis states and pre-answer states. Non-IA methods retain the legacy
+    reconstructable ``h_reasoned`` checkpoint when one is available.
     """
 
     query = row.get("query") or row.get("prompt")
@@ -125,16 +128,60 @@ def build_checkpoint_texts(tokenizer: Any, row: dict[str, Any]) -> list[Checkpoi
     if method == IA_METHOD:
         reasoned_messages = _valid_messages(messages.get("final"))
         if reasoned_messages:
-            reasoned_text = render_messages(tokenizer, reasoned_messages, enable_thinking)
-            if reasoned_text not in seen_texts:
+            if len(reasoned_messages) < 3 or [
+                message["role"] for message in reasoned_messages[:3]
+            ] != ["user", "assistant", "user"]:
+                raise ValueError("IA final messages must begin user/assistant/user")
+            controls = row.get("representation_controls")
+            true_control: dict[str, Any] = {
+                "analysis": reasoned_messages[1]["content"]
+            }
+            if isinstance(controls, dict) and isinstance(controls.get("true"), dict):
+                true_control.update(controls["true"])
+                true_control["analysis"] = reasoned_messages[1]["content"]
+            control_map: dict[str, dict[str, Any]] = {"true": true_control}
+            if isinstance(controls, dict):
+                for control_name in ("shuffled", "empty"):
+                    value = controls.get(control_name)
+                    if not isinstance(value, dict) or not isinstance(value.get("analysis"), str):
+                        raise ValueError(f"IA row has an invalid {control_name} control")
+                    control_map[control_name] = value
+            for control_name, control in control_map.items():
+                controlled_messages = [dict(message) for message in reasoned_messages]
+                controlled_messages[1]["content"] = str(control["analysis"])
+                analysis_messages = controlled_messages[:2]
+                analysis_text = render_messages(
+                    tokenizer,
+                    analysis_messages,
+                    enable_thinking,
+                    add_generation_prompt=False,
+                )
+                control_metadata = {
+                    key: value
+                    for key, value in control.items()
+                    if key != "analysis"
+                }
                 checkpoints.append(
                     CheckpointText(
-                        "h_reasoned",
-                        reasoned_text,
-                        "stored_messages.final_after_stage1_analysis",
+                        f"h_analysis_boundary_{control_name}",
+                        analysis_text,
+                        f"stored_messages.final.analysis_boundary.{control_name}",
+                        {"control": control_name, **control_metadata},
                     )
                 )
-                seen_texts.add(reasoned_text)
+                preanswer_text = render_messages(
+                    tokenizer,
+                    controlled_messages,
+                    enable_thinking,
+                )
+                checkpoints.append(
+                    CheckpointText(
+                        f"h_preanswer_{control_name}",
+                        preanswer_text,
+                        f"stored_messages.final.preanswer.{control_name}",
+                        {"control": control_name, **control_metadata},
+                    )
+                )
     else:
         prefix = generated_reasoning_prefix(row)
         if prefix:
@@ -150,4 +197,3 @@ def build_checkpoint_texts(tokenizer: Any, row: dict[str, Any]) -> list[Checkpoi
                 )
 
     return checkpoints
-

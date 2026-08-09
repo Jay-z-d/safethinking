@@ -59,9 +59,11 @@ For every paired benign/harmful instruction, extract comparable hidden states fr
 
 - `h_query`: the original-query prompt-end state (method-independent baseline).
 - `h_guided`: the method-wrapped prompt-end state before generated reasoning.
-- `h_reasoned`: the state after the safety/native reasoning trace and immediately before the final answer.
+- `h_analysis_boundary_true`: the state immediately after the true safety analysis and a fixed end-of-turn boundary, before any continuation request.
+- `h_preanswer_true`: the state after the analysis and fixed continuation structure, immediately before the final answer.
+- `*_shuffled` and `*_empty`: fold-local length-matched and empty controls that separate query-specific reasoning content from extra tokens and chat format.
 
-The minimum first experiment may compare `h_query` with `h_reasoned`; retain `h_guided` when available to separate the effect of adding a safety prompt from the effect of carrying out reasoning. The current vLLM generation pipeline does not retain hidden states, so activation extraction needs a separate, reproducible local-model pass over the saved exact contexts/traces.
+The primary reasoning contrast compares `h_guided` with `h_analysis_boundary_true`, and the primary content-specific control compares `h_analysis_boundary_shuffled` with `h_analysis_boundary_true`. Compare `h_query` with `h_preanswer_true` only as an end-to-end secondary result. The current vLLM generation pipeline does not retain hidden states, so activation extraction needs a separate, reproducible local-model pass over the saved exact contexts/traces.
 
 Keep both sides of a `pair_id` in the same train/validation/test fold. Fit preprocessing and a regularized linear SVM or logistic-regression probe on training folds only. Report held-out ROC-AUC, balanced accuracy, and signed normalized margin, with bootstrap confidence intervals over pairs. Do not use training-set separability as evidence, especially when hidden dimension exceeds sample count.
 
@@ -71,7 +73,7 @@ With `y=+1` for harmful and `y=-1` for benign, use one sign-consistent per-examp
 m_i(h) = y_i * (w^T h_i + b) / ||w||
 ```
 
-Then compare `E[m_i(h_reasoned)] - E[m_i(h_query)]` overall and separately by class (and also `h_guided` where available). If the harmful score is defined as positive, the benign-class margin must use `-s(h)`, not `s(h)`. Use identical samples, split assignments, layer/pooling choices, normalization, probe family, hyperparameter selection, and random seeds for the before/after comparison.
+Compare checkpoint deltas overall and separately by class. If the harmful score is defined as positive, the benign-class margin must use `-s(h)`, not `s(h)`. Fit the scaler on before-state training rows only, keep repeated `harmful_source_index` groups within one fold, and use the same samples, frozen fold manifest, layer/pooling choice, probe family, hyperparameters, and generation seeds for every contrast.
 
 ### Follow-up analyses
 
@@ -80,7 +82,7 @@ Then compare `E[m_i(h_reasoned)] - E[m_i(h_query)]` overall and separately by cl
 3. **Native reasoning models:** use a model with genuine switchable/native reasoning and run a controlled design crossing native thinking off/on with safety guidance absent/present. Keep Llama-3.1 as a non-native-reasoning control; prompted safety analysis is not equivalent to native reasoning.
 4. **Training-based methods:** begin only after the corrected outcome pipeline and representation extraction are frozen. Add each method through a reproducible adapter/config, then rerun the same paired evaluation and mechanistic analyses.
 
-For every experiment, record the code commit, target model and revision, external method repository commit, exact prompts, `enable_thinking`, seeds, pair-level split manifest, hidden-state layer/pooling definition, calibration artifact, and `RUN_TAG`.
+For every experiment, record the code commit, target model and revision, external method repository commit, exact prompts, `enable_thinking`, seeds, harmful-source-grouped fold manifest, hidden-state layer/pooling definition, calibration artifact, and `RUN_TAG`.
 
 ### Execution order on the shared server
 
