@@ -45,6 +45,10 @@ builds fold-local length-matched controls, extracts multiple layers, and runs
 source-clustered refit-bootstrap probes. The older commands below describe the
 historical 20-pair smoke workflow only.
 
+After the pilot gates pass, use [`FORMAL_FULL_RUNBOOK.md`](FORMAL_FULL_RUNBOOK.md)
+for the immutable 3,343-pair run. Its Slurm arrays are resumable and its merge
+steps reject missing, duplicate, checksum-mismatched, or cross-model artifacts.
+
 ## 1. Generate a small IA dataset
 
 Clone the official IA method source once (it is intentionally gitignored):

@@ -64,6 +64,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--c", type=float, default=1.0)
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--bootstrap-samples", type=int, default=1000)
+    parser.add_argument(
+        "--bootstrap-start-index",
+        type=int,
+        default=0,
+        help="Zero-based first bootstrap draw; enables deterministic job sharding.",
+    )
+    parser.add_argument(
+        "--store-bootstrap-draws",
+        action="store_true",
+        help="Store per-draw metrics so independently computed chunks can be merged.",
+    )
+    parser.add_argument(
+        "--skip-predictions",
+        action="store_true",
+        help="Do not write redundant OOF predictions for bootstrap chunks.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -411,7 +427,7 @@ def bootstrap_cluster_rows(
     return indices, synthetic_groups, fixed_fold_ids
 
 
-def bootstrap_refit_intervals(
+def bootstrap_refit_distributions(
     before: np.ndarray,
     after: np.ndarray,
     labels: np.ndarray,
@@ -422,16 +438,24 @@ def bootstrap_refit_intervals(
     weighting: str,
     samples: int,
     seed: int,
+    start_index: int = 0,
 ) -> dict[str, dict[str, list[float]]]:
     if samples < 1:
         raise ValueError("--bootstrap-samples must be positive")
+    if start_index < 0:
+        raise ValueError("--bootstrap-start-index must be non-negative")
     rng = np.random.default_rng(seed)
     source_ids = np.unique(groups)
     distributions = {
         state: {metric: [] for metric in METRIC_NAMES}
         for state in ("before", "after", "delta")
     }
-    for bootstrap_index in range(samples):
+    # Consume preceding draws so chunk [start, start+n) is bit-for-bit
+    # equivalent to the same slice of one monolithic seeded run.
+    for _ in range(start_index):
+        rng.choice(source_ids, size=len(source_ids), replace=True)
+    for local_index in range(samples):
+        bootstrap_index = start_index + local_index
         sampled_sources = rng.choice(source_ids, size=len(source_ids), replace=True)
         indices, bootstrap_groups, fixed_fold_ids = bootstrap_cluster_rows(
             groups,
@@ -464,6 +488,22 @@ def bootstrap_refit_intervals(
             distributions["delta"][metric].append(
                 after_metrics[metric] - before_metrics[metric]
             )
+    return distributions
+
+
+def bootstrap_intervals_from_distributions(
+    distributions: dict[str, dict[str, list[float]]],
+) -> dict[str, dict[str, list[float]]]:
+    expected_states = {"before", "after", "delta"}
+    if set(distributions) != expected_states:
+        raise ValueError(f"Bootstrap distributions require states {sorted(expected_states)}")
+    lengths = {
+        len(values)
+        for metrics in distributions.values()
+        for values in metrics.values()
+    }
+    if len(lengths) != 1 or not lengths or next(iter(lengths)) < 1:
+        raise ValueError("Bootstrap distributions have inconsistent/empty draw counts")
     return {
         state: {
             metric: [
@@ -474,6 +514,33 @@ def bootstrap_refit_intervals(
         }
         for state, metrics in distributions.items()
     }
+
+
+def bootstrap_refit_intervals(
+    before: np.ndarray,
+    after: np.ndarray,
+    labels: np.ndarray,
+    groups: np.ndarray,
+    folds: int,
+    probe_kind: str,
+    c_value: float,
+    weighting: str,
+    samples: int,
+    seed: int,
+) -> dict[str, dict[str, list[float]]]:
+    distributions = bootstrap_refit_distributions(
+        before,
+        after,
+        labels,
+        groups,
+        folds,
+        probe_kind,
+        c_value,
+        weighting,
+        samples,
+        seed,
+    )
+    return bootstrap_intervals_from_distributions(distributions)
 
 
 def main() -> None:
@@ -513,7 +580,7 @@ def main() -> None:
     delta_metrics = {
         metric: after_metrics[metric] - before_metrics[metric] for metric in METRIC_NAMES
     }
-    intervals = bootstrap_refit_intervals(
+    bootstrap_draws = bootstrap_refit_distributions(
         before,
         after,
         labels,
@@ -524,7 +591,9 @@ def main() -> None:
         args.weighting,
         args.bootstrap_samples,
         args.seed,
+        args.bootstrap_start_index,
     )
+    intervals = bootstrap_intervals_from_distributions(bootstrap_draws)
     result = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "input_dir": str(args.input_dir),
@@ -570,43 +639,57 @@ def main() -> None:
         "bootstrap_source_refit_95_ci": intervals,
         "bootstrap_duplicate_source_policy": "same_original_source_same_fold",
         "bootstrap_samples": args.bootstrap_samples,
+        "bootstrap_start_index": args.bootstrap_start_index,
         "seed": args.seed,
     }
+    if args.store_bootstrap_draws:
+        result["bootstrap_draws"] = bootstrap_draws
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
 
-    predictions_output = args.predictions_output or args.output.with_suffix(
-        ".predictions.jsonl"
-    )
-    predictions_output.parent.mkdir(parents=True, exist_ok=True)
-    with predictions_output.open("w", encoding="utf-8", newline="\n") as handle:
-        for index, key in enumerate(keys):
-            pair_id, side, run_id, group_id = key
-            handle.write(
-                json.dumps(
-                    {
-                        "pair_id": pair_id,
-                        "side": side,
-                        "run_id": run_id,
-                        "source_group": group_id,
-                        "label": int(labels[index]),
-                        "fold": int(fold_ids[index]),
-                        "sample_weight": float(weights[index]),
-                        "before_raw_space_decision": float(before_decisions[index]),
-                        "after_raw_space_decision": float(after_decisions[index]),
-                        "before_signed_margin": float(labels[index] * before_decisions[index]),
-                        "after_signed_margin": float(labels[index] * after_decisions[index]),
-                    },
-                    ensure_ascii=False,
+    predictions_output: Path | None = None
+    if not args.skip_predictions:
+        predictions_output = args.predictions_output or args.output.with_suffix(
+            ".predictions.jsonl"
+        )
+        predictions_output.parent.mkdir(parents=True, exist_ok=True)
+        with predictions_output.open("w", encoding="utf-8", newline="\n") as handle:
+            for index, key in enumerate(keys):
+                pair_id, side, run_id, group_id = key
+                handle.write(
+                    json.dumps(
+                        {
+                            "pair_id": pair_id,
+                            "side": side,
+                            "run_id": run_id,
+                            "source_group": group_id,
+                            "label": int(labels[index]),
+                            "fold": int(fold_ids[index]),
+                            "sample_weight": float(weights[index]),
+                            "before_raw_space_decision": float(before_decisions[index]),
+                            "after_raw_space_decision": float(after_decisions[index]),
+                            "before_signed_margin": float(
+                                labels[index] * before_decisions[index]
+                            ),
+                            "after_signed_margin": float(
+                                labels[index] * after_decisions[index]
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
     print(
         json.dumps(
-            {**result, "predictions_output": str(predictions_output)},
+            {
+                **result,
+                "predictions_output": (
+                    str(predictions_output) if predictions_output is not None else None
+                ),
+            },
             ensure_ascii=False,
             indent=2,
         )

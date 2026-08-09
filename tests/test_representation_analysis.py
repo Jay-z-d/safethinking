@@ -11,6 +11,7 @@ from representation_analysis.checkpoints import build_checkpoint_texts
 from representation_analysis.probe_separability import (
     balanced_group_fold_ids,
     bootstrap_cluster_rows,
+    bootstrap_refit_distributions,
     bootstrap_refit_intervals,
     cross_validated_decisions,
     load_checkpoint_vectors,
@@ -374,6 +375,26 @@ class ProbeTests(unittest.TestCase):
                 len(np.unique(fold_ids[original_sources == source])),
                 1,
             )
+
+    def test_sharded_bootstrap_matches_monolithic_draw_sequence(self):
+        rng = np.random.default_rng(19)
+        group_count = 10
+        labels = np.tile(np.asarray([-1, 1], dtype=np.int8), group_count)
+        groups = np.repeat(np.asarray([f"g{i:02d}" for i in range(group_count)]), 2)
+        before = rng.normal(size=(group_count * 2, 3)).astype(np.float32)
+        after = before.copy()
+        after[:, 0] += labels * 0.4
+        arguments = (before, after, labels, groups, 2, "logistic", 1.0, "pair")
+
+        monolithic = bootstrap_refit_distributions(*arguments, 4, 42)
+        first = bootstrap_refit_distributions(*arguments, 2, 42, 0)
+        second = bootstrap_refit_distributions(*arguments, 2, 42, 2)
+        for state in monolithic:
+            for metric in monolithic[state]:
+                self.assertEqual(
+                    monolithic[state][metric],
+                    first[state][metric] + second[state][metric],
+                )
 
 
 class CaseStudyMetricTests(unittest.TestCase):
