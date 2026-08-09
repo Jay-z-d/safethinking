@@ -62,7 +62,7 @@ The pair-weighted result answers the original project's 3,343-boundary-pair ques
 - Formal run: all 3,343 official pairs, three generation seeds, using the frozen configuration.
 - Robustness run: the same saved outputs reweighted by source and evaluated on the frozen canonical one-per-harmful subset; no new generation is required.
 
-Create and checksum the 100-pair pilot manifest, grouped formal-fold manifest, and canonical sensitivity manifest. All conditions, checkpoints, generation seeds, and probes must reuse them.
+Create and checksum a separately balanced 100-pair pilot-fold manifest, the grouped 3,343-pair formal-fold manifest, and the canonical sensitivity manifest. All conditions, checkpoints, generation seeds, and probes must use the manifest for their own dataset; do not project the highly imbalanced full-data source groups onto the pilot subset.
 
 Before the main run, manually audit a blinded sample of at least 100 selected pairs for label correctness, semantic relatedness, and accidental near-duplicates. Report the audit protocol and disagreement rate.
 

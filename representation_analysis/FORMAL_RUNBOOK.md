@@ -45,12 +45,14 @@ After completion:
 ```bash
 cat "$RUN_ROOT/formal-data/manifest.json"
 wc -l "$RUN_ROOT/formal-data/pilot_pairs.jsonl"
+wc -l "$RUN_ROOT/formal-data/pilot_folds.jsonl"
 wc -l "$RUN_ROOT/formal-data/formal_folds.jsonl"
 test -f "$RUN_ROOT/formal-data/_SUCCESS" && echo "formal data ready"
 ```
 
-Expected: 100 pilot pairs, 3,343 fold rows, 1,243 canonical pairs, fold pair
-counts 669/669/669/668/668, and a completion marker.
+Expected: 100 pilot pairs, 100 pilot-fold rows, 3,343 formal-fold rows, 1,243
+canonical pairs, pilot fold counts 20/20/20/20/20, formal fold pair counts
+669/669/669/668/668, and a completion marker.
 
 ## 2. No-GPU prompt validation
 
@@ -100,7 +102,7 @@ Expected: 100 pairs x 2 sides x 3 seeds = 600 rows, with no traceback.
 ```bash
 export INPUT=$RUN_ROOT/ia_true.generation.jsonl
 export OUTPUT=$RUN_ROOT/ia_controlled.generation.jsonl
-export FOLD_MANIFEST=$RUN_ROOT/formal-data/formal_folds.jsonl
+export FOLD_MANIFEST=$RUN_ROOT/formal-data/pilot_folds.jsonl
 export TOKENIZER=$MODEL
 
 sbatch \
@@ -151,7 +153,7 @@ The first contrast tests reasoning versus the guided prompt. Start with seed 42:
 
 ```bash
 export INPUT_DIR=$RUN_ROOT/representations
-export FOLD_MANIFEST=$RUN_ROOT/formal-data/formal_folds.jsonl
+export FOLD_MANIFEST=$RUN_ROOT/formal-data/pilot_folds.jsonl
 export METHOD=safe_llm_intention_analysis
 export BEFORE=h_guided
 export AFTER=h_analysis_boundary_true

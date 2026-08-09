@@ -188,6 +188,7 @@ def prepare_formal_data(
     canonical = canonical_pairs(rows)
     pair_folds, fold_loads = assign_group_folds(rows, folds, seed)
     pilot = select_pilot(canonical, pilot_pair_count, seed)
+    pilot_pair_folds, pilot_fold_loads = assign_group_folds(pilot, folds, seed)
     pilot_ids = {str(row["pair_id"]) for row in pilot}
     canonical_ids = {str(row["pair_id"]) for row in canonical}
     harmful_counts = Counter(str(row["harmful_source_index"]) for row in rows)
@@ -195,6 +196,7 @@ def prepare_formal_data(
     pilot_path = output_dir / "pilot_pairs.jsonl"
     canonical_path = output_dir / "canonical_pairs.jsonl"
     folds_path = output_dir / "formal_folds.jsonl"
+    pilot_folds_path = output_dir / "pilot_folds.jsonl"
     write_jsonl(pilot_path, pilot)
     write_jsonl(canonical_path, sorted(canonical, key=lambda row: str(row["pair_id"])))
     write_jsonl(
@@ -212,6 +214,21 @@ def prepare_formal_data(
             for row in sorted(rows, key=lambda item: str(item["pair_id"]))
         ),
     )
+    write_jsonl(
+        pilot_folds_path,
+        (
+            {
+                "pair_id": str(row["pair_id"]),
+                "harmful_source_index": str(row["harmful_source_index"]),
+                "fold": pilot_pair_folds[str(row["pair_id"])],
+                "harmful_source_reuse": 1,
+                "source_weight": 1.0,
+                "is_pilot": True,
+                "is_canonical": True,
+            }
+            for row in sorted(pilot, key=lambda item: str(item["pair_id"]))
+        ),
+    )
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "input": str(input_path),
@@ -224,6 +241,7 @@ def prepare_formal_data(
         "reused_harmful_sources": sum(count > 1 for count in harmful_counts.values()),
         "max_harmful_source_reuse": max(harmful_counts.values()),
         "fold_pair_counts": fold_loads,
+        "pilot_fold_pair_counts": pilot_fold_loads,
         "pilot_pair_count": len(pilot),
         "pilot_unique_harmful_sources": len(
             {str(row["harmful_source_index"]) for row in pilot}
@@ -237,6 +255,7 @@ def prepare_formal_data(
             "pilot_pairs": pilot_path.name,
             "canonical_pairs": canonical_path.name,
             "formal_folds": folds_path.name,
+            "pilot_folds": pilot_folds_path.name,
         },
     }
     for key, filename in manifest["files"].items():

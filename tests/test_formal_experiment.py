@@ -87,6 +87,13 @@ class FormalDataTests(unittest.TestCase):
             ]
             repeated = [row for row in folds if row["harmful_source_index"] == "10"]
             self.assertEqual(len({row["fold"] for row in repeated}), 1)
+            pilot_folds = [
+                json.loads(line)
+                for line in (output_dir / "pilot_folds.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(len(pilot_folds), 3)
+            self.assertEqual({row["fold"] for row in pilot_folds}, {0, 1})
+            self.assertEqual(sum(manifest["pilot_fold_pair_counts"]), 3)
 
     def test_generation_records_preserve_harmful_source_group(self):
         row = pair_row("p0", 0, 99, 0.8)
