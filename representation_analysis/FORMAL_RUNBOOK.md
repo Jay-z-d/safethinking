@@ -190,7 +190,8 @@ Probe results must report:
 - `scaler_fit: before_train_only`;
 - `margin_space: raw_hidden_state`;
 - fold-wise metrics;
-- `bootstrap_source_refit_95_ci`.
+- `bootstrap_source_refit_95_ci`;
+- `bootstrap_duplicate_source_policy: same_original_source_same_fold`.
 
 ## 7. Budget gate
 

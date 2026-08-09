@@ -377,6 +377,40 @@ def fold_metric_values(
     return aggregate, per_fold
 
 
+def bootstrap_cluster_rows(
+    groups: np.ndarray,
+    sampled_sources: np.ndarray,
+    folds: int,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Expand source-cluster draws without leaking duplicate rows across folds."""
+    source_indices = {
+        source: np.flatnonzero(groups == source) for source in np.unique(groups)
+    }
+    indices_parts: list[np.ndarray] = []
+    draw_groups: list[str] = []
+    original_groups: list[str] = []
+    for draw_index, source in enumerate(sampled_sources):
+        if source not in source_indices:
+            raise ValueError(f"Bootstrap source {source!r} is absent from groups")
+        indices = source_indices[source]
+        indices_parts.append(indices)
+        draw_groups.extend([f"{draw_index}:{source}"] * len(indices))
+        original_groups.extend([str(source)] * len(indices))
+    if not indices_parts:
+        raise ValueError("Bootstrap requires at least one sampled source")
+
+    indices = np.concatenate(indices_parts)
+    synthetic_groups = np.asarray(draw_groups)
+    # Repeated draws keep distinct weight-cluster IDs, but every copy of the
+    # same original source receives one fold. This preserves multiplicity
+    # without putting identical rows in both probe training and test sets.
+    fixed_fold_ids = balanced_group_fold_ids(
+        np.asarray(original_groups), folds, seed
+    )
+    return indices, synthetic_groups, fixed_fold_ids
+
+
 def bootstrap_refit_intervals(
     before: np.ndarray,
     after: np.ndarray,
@@ -393,21 +427,18 @@ def bootstrap_refit_intervals(
         raise ValueError("--bootstrap-samples must be positive")
     rng = np.random.default_rng(seed)
     source_ids = np.unique(groups)
-    source_indices = {source: np.flatnonzero(groups == source) for source in source_ids}
     distributions = {
         state: {metric: [] for metric in METRIC_NAMES}
         for state in ("before", "after", "delta")
     }
     for bootstrap_index in range(samples):
         sampled_sources = rng.choice(source_ids, size=len(source_ids), replace=True)
-        indices_parts: list[np.ndarray] = []
-        synthetic_groups: list[str] = []
-        for draw_index, source in enumerate(sampled_sources):
-            indices = source_indices[source]
-            indices_parts.append(indices)
-            synthetic_groups.extend([f"{draw_index}:{source}"] * len(indices))
-        indices = np.concatenate(indices_parts)
-        bootstrap_groups = np.asarray(synthetic_groups)
+        indices, bootstrap_groups, fixed_fold_ids = bootstrap_cluster_rows(
+            groups,
+            sampled_sources,
+            folds,
+            seed + bootstrap_index + 1,
+        )
         bootstrap_before, bootstrap_after, bootstrap_folds = cross_validated_decisions(
             before[indices],
             after[indices],
@@ -417,6 +448,7 @@ def bootstrap_refit_intervals(
             probe_kind,
             c_value,
             seed + bootstrap_index + 1,
+            fixed_fold_ids=fixed_fold_ids,
             weighting=weighting,
         )
         weights = sample_weights(bootstrap_groups, weighting)
@@ -536,6 +568,7 @@ def main() -> None:
             "after": metric_values(labels, after_decisions, weights),
         },
         "bootstrap_source_refit_95_ci": intervals,
+        "bootstrap_duplicate_source_policy": "same_original_source_same_fold",
         "bootstrap_samples": args.bootstrap_samples,
         "seed": args.seed,
     }

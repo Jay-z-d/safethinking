@@ -122,7 +122,7 @@ Layer-wise curves are exploratory. Apply false-discovery-rate correction and do 
 ### Inference
 
 - On all 3,343 pairs, use five harmful-source-grouped outer folds with frozen hyperparameters to produce paired out-of-fold predictions.
-- Build 95% confidence intervals with a harmful-source cluster outer bootstrap that refits preprocessing and probes. Use at least 1,000 resamples for the final table.
+- Build 95% confidence intervals with a harmful-source cluster outer bootstrap that refits preprocessing and probes. Repeated draws of one source retain their bootstrap multiplicity but must remain in the same outer fold, so identical rows never occur in both train and test. Use at least 1,000 resamples for the final table.
 - Aggregate repeated generation seeds and pairs within the resampled harmful-source hierarchy.
 - Apply Holm correction to the two primary contrasts. Use Benjamini-Hochberg FDR for layer-wise and other exploratory analyses.
 - Include label-permutation, random-direction, prompt-length, and bag-of-words baselines.

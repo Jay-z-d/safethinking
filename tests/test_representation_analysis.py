@@ -10,6 +10,7 @@ from safetensors.numpy import save_file
 from representation_analysis.checkpoints import build_checkpoint_texts
 from representation_analysis.probe_separability import (
     balanced_group_fold_ids,
+    bootstrap_cluster_rows,
     bootstrap_refit_intervals,
     cross_validated_decisions,
     load_checkpoint_vectors,
@@ -351,6 +352,28 @@ class ProbeTests(unittest.TestCase):
         )
         self.assertEqual(set(intervals), {"before", "after", "delta"})
         self.assertEqual(len(intervals["delta"]["roc_auc"]), 2)
+
+    def test_bootstrap_duplicate_source_never_crosses_folds(self):
+        groups = np.repeat(np.asarray([f"g{i}" for i in range(6)]), 2)
+        sampled_sources = np.asarray(
+            ["g0", "g0", "g1", "g2", "g3", "g4", "g5"]
+        )
+        indices, draw_groups, fold_ids = bootstrap_cluster_rows(
+            groups,
+            sampled_sources,
+            folds=3,
+            seed=42,
+        )
+        original_sources = groups[indices]
+
+        # Duplicate draws remain distinct weighting clusters...
+        self.assertNotEqual(draw_groups[0], draw_groups[2])
+        # ...but identical original-source rows can never cross CV folds.
+        for source in np.unique(original_sources):
+            self.assertEqual(
+                len(np.unique(fold_ids[original_sources == source])),
+                1,
+            )
 
 
 class CaseStudyMetricTests(unittest.TestCase):
