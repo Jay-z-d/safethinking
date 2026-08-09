@@ -15,6 +15,9 @@ class WordTokenizer:
         assert add_special_tokens is False
         return text.split()
 
+    def decode(self, token_ids, **kwargs):
+        return " ".join(token_ids)
+
 
 def pair_row(pair_id, benign_index, harmful_index, reranker, embedding=0.6):
     return {
@@ -28,8 +31,8 @@ def pair_row(pair_id, benign_index, harmful_index, reranker, embedding=0.6):
     }
 
 
-def generation_row(pair_id, side, run_id, fold, group):
-    analysis = f"analysis content for {pair_id} {side}"
+def generation_row(pair_id, side, run_id, fold, group, analysis=None):
+    analysis = analysis or f"analysis content for {pair_id} {side}"
     return {
         "record_id": f"{pair_id}:{side}",
         "pair_id": pair_id,
@@ -120,19 +123,59 @@ class ControlTests(unittest.TestCase):
                     generation_row(pair_id, "harmful", 42, 0, group),
                 ]
             )
-        controlled = attach_controls(rows, folds, WordTokenizer(), 0.15, 8)
+        controlled = attach_controls(rows, folds, WordTokenizer())
         donor_sides = {"benign": [], "harmful": []}
         for row in controlled:
             control = row["representation_controls"]["shuffled"]
             self.assertNotEqual(control["donor_pair_id"], row["pair_id"])
             self.assertNotEqual(control["donor_source_group"], row["source_group"])
-            self.assertLessEqual(control["token_difference"], 8)
+            self.assertEqual(control["token_difference"], 0)
+            self.assertEqual(
+                control["analysis_token_count"],
+                row["representation_controls"]["true"]["analysis_token_count"],
+            )
             self.assertEqual(row["formal_fold"], 0)
             donor_sides[row["side"]].append(control["donor_side"])
         self.assertEqual(donor_sides["benign"].count("benign"), 2)
         self.assertEqual(donor_sides["benign"].count("harmful"), 2)
         self.assertEqual(donor_sides["harmful"].count("benign"), 2)
         self.assertEqual(donor_sides["harmful"].count("harmful"), 2)
+
+    def test_composes_short_donors_to_exact_recipient_length(self):
+        rows = []
+        folds = {}
+        for index in range(4):
+            pair_id = f"p{index}"
+            group = f"g{index}"
+            folds[pair_id] = (0, group)
+            benign_analysis = (
+                "one two three four five six seven eight nine ten eleven twelve"
+                if index == 0
+                else f"short benign {index}"
+            )
+            rows.extend(
+                [
+                    generation_row(
+                        pair_id, "benign", 42, 0, group, benign_analysis
+                    ),
+                    generation_row(
+                        pair_id, "harmful", 42, 0, group, f"brief harmful {index}"
+                    ),
+                ]
+            )
+
+        controlled = attach_controls(rows, folds, WordTokenizer())
+        recipient = next(
+            row
+            for row in controlled
+            if row["pair_id"] == "p0" and row["side"] == "benign"
+        )
+        shuffled = recipient["representation_controls"]["shuffled"]
+        self.assertEqual(shuffled["analysis_token_count"], 12)
+        self.assertEqual(shuffled["token_difference"], 0)
+        self.assertGreater(shuffled["segments"], 1)
+        self.assertNotIn("p0", shuffled["donor_pair_ids"])
+        self.assertNotIn("g0", shuffled["donor_source_groups"])
 
     def test_rejects_incomplete_pair_seed(self):
         rows = [generation_row("p0", "benign", 42, 0, "g0")]

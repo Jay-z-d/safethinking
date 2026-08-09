@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -20,8 +19,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--fold-manifest", type=Path, required=True)
     parser.add_argument("--tokenizer", type=Path, required=True)
-    parser.add_argument("--length-tolerance-ratio", type=float, default=0.15)
-    parser.add_argument("--minimum-token-tolerance", type=int, default=8)
     parser.add_argument("--trust-remote-code", action="store_true")
     return parser.parse_args()
 
@@ -113,15 +110,78 @@ def validate_complete_runs(rows: list[dict[str, Any]]) -> None:
         )
 
 
+def _encode_without_special_tokens(tokenizer: Any, text: str) -> list[Any]:
+    return list(tokenizer.encode(text, add_special_tokens=False))
+
+
+def _decode_without_cleanup(tokenizer: Any, token_ids: list[Any]) -> str:
+    try:
+        return tokenizer.decode(
+            token_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+    except TypeError:
+        # Small test tokenizers need not implement the complete Hugging Face API.
+        return tokenizer.decode(token_ids)
+
+
+def _compose_exact_length_control(
+    prepared: list[dict[str, Any]],
+    candidate_indices: list[int],
+    target_token_count: int,
+    tokenizer: Any,
+) -> tuple[str, list[int], int]:
+    """Compose unrelated donor analyses and truncate to an exact token count."""
+    ordered = sorted(
+        candidate_indices,
+        key=lambda index: (
+            abs(
+                int(prepared[index]["_control_work"]["analysis_token_count"])
+                - target_token_count
+            ),
+            _row_key(prepared[index]),
+        ),
+    )
+    if not ordered:
+        raise ValueError("Cannot compose a shuffled control without donors")
+
+    pieces: list[str] = []
+    used_indices: list[int] = []
+    composed_ids: list[Any] = []
+    cursor = 0
+    # Cycling is only needed when a fold contains many very short refusals.
+    # Each non-empty donor must increase the composed token count, so the bound
+    # is conservative and protects custom tokenizers from an infinite loop.
+    maximum_segments = target_token_count + len(ordered)
+    while len(composed_ids) < target_token_count:
+        donor_index = ordered[cursor % len(ordered)]
+        pieces.append(str(prepared[donor_index]["_control_work"]["analysis"]))
+        used_indices.append(donor_index)
+        composed_ids = _encode_without_special_tokens(tokenizer, "\n\n".join(pieces))
+        cursor += 1
+        if cursor > maximum_segments:
+            raise ValueError(
+                "Unable to construct an exact-length shuffled control from "
+                f"{len(ordered)} non-empty donors"
+            )
+
+    untruncated_count = len(composed_ids)
+    analysis = _decode_without_cleanup(tokenizer, composed_ids[:target_token_count])
+    realized_count = len(_encode_without_special_tokens(tokenizer, analysis))
+    if realized_count != target_token_count:
+        raise ValueError(
+            "Tokenizer decode/encode did not preserve the requested shuffled-control "
+            f"length: requested={target_token_count}, realized={realized_count}"
+        )
+    return analysis, used_indices, untruncated_count
+
+
 def attach_controls(
     rows: list[dict[str, Any]],
     folds: dict[str, tuple[int, str]],
     tokenizer: Any,
-    tolerance_ratio: float,
-    minimum_tolerance: int,
 ) -> list[dict[str, Any]]:
-    if tolerance_ratio < 0 or minimum_tolerance < 0:
-        raise ValueError("Token-length tolerances must be non-negative")
     validate_complete_runs(rows)
     prepared: list[dict[str, Any]] = []
     buckets: dict[tuple[int, int, str], list[int]] = defaultdict(list)
@@ -134,7 +194,7 @@ def attach_controls(
         fold, group_id = folds[pair_id]
         messages = _stored_final_messages(row)
         analysis = messages[1]["content"]
-        token_count = len(tokenizer.encode(analysis, add_special_tokens=False))
+        token_count = len(_encode_without_special_tokens(tokenizer, analysis))
         if token_count < 1:
             raise ValueError(f"Tokenizer produced no analysis tokens for {_row_key(row)}")
         copy = dict(row)
@@ -160,7 +220,7 @@ def attach_controls(
         )
         for rank, recipient_index in enumerate(recipient_indices):
             recipient = prepared[recipient_index]
-            recipient_pair, recipient_side_value, _ = _row_key(recipient)
+            recipient_pair, _, _ = _row_key(recipient)
             target_side = ("benign", "harmful")[rank % 2]
             candidates = [
                 candidate_index
@@ -175,40 +235,41 @@ def attach_controls(
                     f"fold={fold}, run={run_id}"
                 )
             recipient_tokens = int(recipient["_control_work"]["analysis_token_count"])
-            donor_index = min(
-                candidates,
-                key=lambda index: (
-                    abs(
-                        int(prepared[index]["_control_work"]["analysis_token_count"])
-                        - recipient_tokens
-                    ),
-                    _row_key(prepared[index]),
-                ),
+            shuffled_analysis, used_indices, untruncated_count = (
+                _compose_exact_length_control(
+                    prepared,
+                    candidates,
+                    recipient_tokens,
+                    tokenizer,
+                )
             )
-            donor = prepared[donor_index]
+            donor = prepared[used_indices[0]]
             donor_pair, donor_side, _ = _row_key(donor)
             donor_group = str(donor["source_group"])
-            donor_tokens = int(donor["_control_work"]["analysis_token_count"])
-            difference = abs(donor_tokens - recipient_tokens)
-            tolerance = max(minimum_tolerance, math.ceil(recipient_tokens * tolerance_ratio))
-            if difference > tolerance:
-                raise ValueError(
-                    "No sufficiently length-matched shuffled analysis for "
-                    f"{recipient_pair}/{recipient_side_value}/run{run_id}: "
-                    f"recipient={recipient_tokens}, nearest={donor_tokens}, tolerance={tolerance}"
-                )
+            unique_used_indices = list(dict.fromkeys(used_indices))
+            donor_pair_ids = [
+                _row_key(prepared[index])[0] for index in unique_used_indices
+            ]
+            donor_source_groups = [
+                str(prepared[index]["source_group"]) for index in unique_used_indices
+            ]
             recipient["representation_controls"] = {
                 "true": {
                     "analysis_token_count": recipient_tokens,
                 },
                 "shuffled": {
-                    "analysis": donor["_control_work"]["analysis"],
-                    "analysis_token_count": donor_tokens,
+                    "analysis": shuffled_analysis,
+                    "analysis_token_count": recipient_tokens,
                     "donor_pair_id": donor_pair,
+                    "donor_pair_ids": donor_pair_ids,
                     "donor_side": donor_side,
                     "donor_run_id": run_id,
                     "donor_source_group": donor_group,
-                    "token_difference": difference,
+                    "donor_source_groups": donor_source_groups,
+                    "segments": len(used_indices),
+                    "untruncated_token_count": untruncated_count,
+                    "construction": "fold_local_target_label_compose_then_truncate",
+                    "token_difference": 0,
                 },
                 "empty": {
                     "analysis": "",
@@ -236,8 +297,6 @@ def main() -> None:
         rows,
         load_fold_manifest(args.fold_manifest),
         tokenizer,
-        args.length_tolerance_ratio,
-        args.minimum_token_tolerance,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8", newline="\n") as handle:

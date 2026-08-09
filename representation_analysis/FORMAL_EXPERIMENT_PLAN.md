@@ -74,10 +74,10 @@ For every query and generation seed, construct:
 
 1. `direct`: no IA prompt or analysis;
 2. `ia_true`: the genuine query-specific IA analysis;
-3. `ia_shuffled`: a deranged donor analysis from another pair, selected independently of recipient label and matched within a predeclared token-length tolerance;
+3. `ia_shuffled`: unrelated analyses from another pair and source group, with donor labels assigned independently of recipient label; fold-local donor text is deterministically composed when necessary and truncated to exactly the true-analysis token count;
 4. `ia_empty`: the identical stage-2 chat skeleton with no analysis content.
 
-The shuffled donor must come from the same grouped fold, must never be the recipient's own analysis, and must be balanced so donor label cannot predict recipient label. Record the donor ID and token-length difference. Construct donors after freezing folds and never shuffle across train/test folds.
+Shuffled donor content must come from the same grouped fold, must never use the recipient pair or source group, and must be balanced so donor label cannot predict recipient label. Record every donor ID, the deterministic composition rule, and the realized token-length difference. Construct controls after freezing folds and never draw donor content across train/test folds.
 
 ### Exact checkpoints
 
@@ -175,8 +175,8 @@ Run 100 pairs from 100 distinct harmful sources with three seeds. Proceed only i
 
 - every pair/seed/condition is complete;
 - exact token reconstruction checks pass;
-- no sample is truncated;
-- true and shuffled analysis lengths satisfy the frozen tolerance;
+- no true generation or source prompt is truncated (declared shuffled-control truncation is recorded separately);
+- true and shuffled analyses have exactly equal tokenizer token counts;
 - label-permutation performance is near chance;
 - rerunning the probe reproduces the same metrics;
 - all manifests, logs, and environment records are present.

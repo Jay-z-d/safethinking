@@ -29,6 +29,4 @@ srun python -m representation_analysis.build_controls \
   --input "$INPUT" \
   --output "$OUTPUT" \
   --fold-manifest "$FOLD_MANIFEST" \
-  --tokenizer "$TOKENIZER" \
-  --length-tolerance-ratio 0.15 \
-  --minimum-token-tolerance 8
+  --tokenizer "$TOKENIZER"

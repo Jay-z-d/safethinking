@@ -120,8 +120,9 @@ tail -n 50 slurm-st-ia-controls-<JOBID>.err
 
 Expected: 600 rows. Every row must have `representation_controls`; shuffled
 donors stay in the same fold and seed, use a different source group, have donor
-labels balanced independently of recipient labels, and pass the token-length
-tolerance.
+labels balanced independently of recipient labels. Donor text is composed when
+needed and truncated so every shuffled analysis has exactly the same tokenizer
+token count as its corresponding true analysis.
 
 ## 5. Extract hidden states (one GPU)
 
