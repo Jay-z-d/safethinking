@@ -15,6 +15,7 @@ REFUSAL_FIELDS = (
     "refusal_pattern_aggregation",
     "refusal_pattern_count",
     "refusal_pattern_scores",
+    "refusal_top5_patterns",
 )
 OLD_REFUSAL_FIELDS = ("refusal_score", "refusal_calibration", "refusal_topk_logprob")
 

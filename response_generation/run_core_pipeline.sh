@@ -192,7 +192,7 @@ for method in "${METHOD_LIST[@]}"; do
     --output "${FINAL_SCORED}" \
     --calibration "${BASE_MIXED_RAW}" \
     --stats-output "${CALIBRATION_STATS}" \
-    --calibration-name "${MODEL_TAG}_base_mixed_shared_templates_sum_logprob" \
+    --calibration-name "${MODEL_TAG}_base_mixed_shared_templates_top5_mean_avg_logprob" \
     --raw-field refusal_logprob_sum
 
   "${PYTHON}" -m response_generation.compute_core_metrics \
